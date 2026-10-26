@@ -1,93 +1,68 @@
-import http from 'node:http';
+#!/usr/bin/env bash
+set -euo pipefail
 
-const PORT = process.env.PORT || 8080;
+WORKSPACE="${WORKSPACE_DIR:-/workspace}"
 
-const EXPECTED_TOKEN = process.env.MCP_BEARER_TOKEN || '';
+mkdir -p \
+  "${WORKSPACE}/nethub/nexus" \
+  "${WORKSPACE}/projects" \
+  "${WORKSPACE}/shared" \
+  "${WORKSPACE}/secrets" \
+  "${WORKSPACE}/logs" \
+  "${WORKSPACE}/.claude"
 
-const server = http.createServer((req, res) => {
+ln -sfn "${WORKSPACE}/nethub" /nethub
+ln -sfn "${WORKSPACE}/nethub" /root/nethub
+ln -sfn "${WORKSPACE}/.claude" /root/.claude
 
-  if (req.url === '/health') {
+if [ ! -f "${WORKSPACE}/.claude.json" ]; then
+  cat << 'EOF' > "${WORKSPACE}/.claude.json"
+{
+  "hasCompletedOnboarding": true,
+  "theme": "dark",
+  "bypassPermissionsModeAccepted": true
+}
+EOF
+fi
+ln -sfn "${WORKSPACE}/.claude.json" /root/.claude.json
 
-    res.writeHead(200, { 'Content-Type': 'application/json' });
+cat << 'EOF' > /root/.tmux.conf
+set -g history-limit 50000
+set -g mouse on
+set -g status off
+EOF
 
-    return res.end(JSON.stringify({ status: 'ok' }));
+if ! tmux has-session -t claude-work 2>/dev/null; then
+  tmux new-session -d -s claude-work -c "${WORKSPACE}/nethub/nexus"
+fi
 
-  }
+supergateway \
+  --stdio "tmux-mcp" \
+  --outputTransport streamableHttp \
+  --stateful \
+  --port 8001 \
+  --streamableHttpPath /mcp \
+  > "${WORKSPACE}/logs/tmux-mcp.log" 2>&1 &
 
-  const auth = req.headers['authorization'] || '';
+supergateway \
+  --stdio "mcp-server-filesystem ${WORKSPACE}" \
+  --outputTransport streamableHttp \
+  --stateful \
+  --port 8002 \
+  --streamableHttpPath /mcp \
+  > "${WORKSPACE}/logs/files-mcp.log" 2>&1 &
 
-  if (!EXPECTED_TOKEN || auth !== `Bearer ${EXPECTED_TOKEN}`) {
+ttyd \
+  --port 7681 \
+  --interface 127.0.0.1 \
+  --base-path /terminal \
+  -W \
+  tmux attach-session -t claude-work \
+  > "${WORKSPACE}/logs/ttyd.log" 2>&1 &
 
-    res.writeHead(401, { 'Content-Type': 'application/json' });
+if [ -n "${CF_TUNNEL_TOKEN:-}" ]; then
+  cloudflared tunnel --no-autoupdate run --token "${CF_TUNNEL_TOKEN}" \
+    > "${WORKSPACE}/logs/cloudflared.log" 2>&1 &
+fi
 
-    return res.end(JSON.stringify({ error: 'Unauthorized' }));
-
-  }
-
-  let targetPort = null;
-
-  let targetPath = req.url;
-
-  if (req.url.startsWith('/tmux')) {
-
-    targetPort = 8001;
-
-    targetPath = req.url.replace(/^\/tmux/, '/mcp') || '/mcp';
-
-  } else if (req.url.startsWith('/files')) {
-
-    targetPort = 8002;
-
-    targetPath = req.url.replace(/^\/files/, '/mcp') || '/mcp';
-
-  } else {
-
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-
-    return res.end(JSON.stringify({ error: 'Use /tmux or /files' }));
-
-  }
-
-  const proxyReq = http.request(
-
-    {
-
-      hostname: '127.0.0.1',
-
-      port: targetPort,
-
-      path: targetPath,
-
-      method: req.method,
-
-      headers: req.headers,
-
-    },
-
-    (proxyRes) => {
-
-      res.writeHead(proxyRes.statusCode, proxyRes.headers);
-
-      proxyRes.pipe(res, { end: true });
-
-    }
-
-  );
-
-  proxyReq.on('error', (err) => {
-
-    res.writeHead(502, { 'Content-Type': 'application/json' });
-
-    res.end(JSON.stringify({ error: err.message }));
-
-  });
-
-  req.pipe(proxyReq, { end: true });
-
-});
-
-server.listen(PORT, '0.0.0.0', () => {
-
-  console.log(`MCP Auth Gateway listening on port ${PORT}`);
-
-});
+exec node /opt/worker/gateway.mjs
