@@ -1,0 +1,13 @@
+{
+  "name": "labs-cce-railway-orchestrator",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "validate": "./scripts/validate.sh",
+    "check": "./scripts/cce-init.sh --mode check",
+    "check:strict": "./scripts/cce-init.sh --mode check --strict"
+  }
+}
