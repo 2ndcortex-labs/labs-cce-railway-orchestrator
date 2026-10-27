@@ -1,68 +1,115 @@
-#!/usr/bin/env bash
-set -euo pipefail
+import http from 'node:http';
+import net from 'node:net';
+import crypto from 'node:crypto';
 
-WORKSPACE="${WORKSPACE_DIR:-/workspace}"
+const PORT = Number(process.env.PORT ?? 8080);
+const HOST = process.env.HOST || '127.0.0.1';
+const EXPECTED_TOKEN = process.env.MCP_BEARER_TOKEN || '';
 
-mkdir -p \
-  "${WORKSPACE}/nethub/nexus" \
-  "${WORKSPACE}/projects" \
-  "${WORKSPACE}/shared" \
-  "${WORKSPACE}/secrets" \
-  "${WORKSPACE}/logs" \
-  "${WORKSPACE}/.claude"
-
-ln -sfn "${WORKSPACE}/nethub" /nethub
-ln -sfn "${WORKSPACE}/nethub" /root/nethub
-ln -sfn "${WORKSPACE}/.claude" /root/.claude
-
-if [ ! -f "${WORKSPACE}/.claude.json" ]; then
-  cat << 'EOF' > "${WORKSPACE}/.claude.json"
-{
-  "hasCompletedOnboarding": true,
-  "theme": "dark",
-  "bypassPermissionsModeAccepted": true
+export function isValidToken(req) {
+  if (!EXPECTED_TOKEN) return false;
+  const auth = req.headers['authorization'] || '';
+  const urlObj = new URL(req.url || '/', 'http://127.0.0.1');
+  const queryToken = urlObj.searchParams.get('token');
+  const candidate = queryToken ? `Bearer ${queryToken}` : auth;
+  const expected = `Bearer ${EXPECTED_TOKEN}`;
+  const a = Buffer.from(candidate);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
 }
-EOF
-fi
-ln -sfn "${WORKSPACE}/.claude.json" /root/.claude.json
 
-cat << 'EOF' > /root/.tmux.conf
-set -g history-limit 50000
-set -g mouse on
-set -g status off
-EOF
+export function isAuthorized(req) {
+  if (isValidToken(req)) return true;
+  if ((req.url || '').startsWith('/terminal') && req.headers['cf-access-jwt-assertion']) {
+    return true;
+  }
+  return false;
+}
 
-if ! tmux has-session -t claude-work 2>/dev/null; then
-  tmux new-session -d -s claude-work -c "${WORKSPACE}/nethub/nexus"
-fi
+export function resolveTarget(url = '') {
+  if (url.startsWith('/tmux')) {
+    return { port: Number(process.env.TMUX_MCP_PORT || 8001), path: url.replace(/^\/tmux/, '/mcp') || '/mcp' };
+  }
+  if (url.startsWith('/files')) {
+    return { port: Number(process.env.FILES_MCP_PORT || 8002), path: url.replace(/^\/files/, '/mcp') || '/mcp' };
+  }
+  if (url.startsWith('/terminal')) {
+    return { port: Number(process.env.TTYD_PORT || 7681), path: url };
+  }
+  return null;
+}
 
-supergateway \
-  --stdio "tmux-mcp" \
-  --outputTransport streamableHttp \
-  --stateful \
-  --port 8001 \
-  --streamableHttpPath /mcp \
-  > "${WORKSPACE}/logs/tmux-mcp.log" 2>&1 &
+export const server = http.createServer((req, res) => {
+  if (req.url === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ status: 'ok' }));
+  }
 
-supergateway \
-  --stdio "mcp-server-filesystem ${WORKSPACE}" \
-  --outputTransport streamableHttp \
-  --stateful \
-  --port 8002 \
-  --streamableHttpPath /mcp \
-  > "${WORKSPACE}/logs/files-mcp.log" 2>&1 &
+  if (!isAuthorized(req)) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'Unauthorized' }));
+  }
 
-ttyd \
-  --port 7681 \
-  --interface 127.0.0.1 \
-  --base-path /terminal \
-  -W \
-  tmux attach-session -t claude-work \
-  > "${WORKSPACE}/logs/ttyd.log" 2>&1 &
+  const target = resolveTarget(req.url);
+  if (!target) {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'Use /tmux, /files, or /terminal' }));
+  }
 
-if [ -n "${CF_TUNNEL_TOKEN:-}" ]; then
-  cloudflared tunnel --no-autoupdate run --token "${CF_TUNNEL_TOKEN}" \
-    > "${WORKSPACE}/logs/cloudflared.log" 2>&1 &
-fi
+  const proxyReq = http.request(
+    {
+      hostname: '127.0.0.1',
+      port: target.port,
+      path: target.path,
+      method: req.method,
+      headers: req.headers,
+    },
+    (proxyRes) => {
+      res.writeHead(proxyRes.statusCode || 502, proxyRes.headers);
+      proxyRes.pipe(res, { end: true });
+    }
+  );
 
-exec node /opt/worker/gateway.mjs
+  proxyReq.on('error', (err) => {
+    res.writeHead(502, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: err.message }));
+  });
+
+  req.pipe(proxyReq, { end: true });
+});
+
+server.on('upgrade', (req, socket, head) => {
+  if (!isAuthorized(req)) {
+    socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+
+  const target = resolveTarget(req.url);
+  if (!target) {
+    socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+
+  const proxySocket = net.connect(target.port, '127.0.0.1', () => {
+    let rawReq = `${req.method} ${target.path} HTTP/${req.httpVersion}\r\n`;
+    for (let i = 0; i < req.rawHeaders.length; i += 2) {
+      rawReq += `${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}\r\n`;
+    }
+    rawReq += '\r\n';
+    proxySocket.write(rawReq);
+    if (head && head.length) proxySocket.write(head);
+    socket.pipe(proxySocket).pipe(socket);
+  });
+
+  proxySocket.on('error', () => socket.destroy());
+  socket.on('error', () => proxySocket.destroy());
+});
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  server.listen(PORT, HOST, () => {
+    console.log(`MCP Auth Gateway listening on ${HOST}:${PORT}`);
+  });
+}
