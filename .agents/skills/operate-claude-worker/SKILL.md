@@ -1,33 +1,59 @@
 ---
 name: operate-claude-worker
-description: Connects to an existing Railway worker over Cloudflare Tunnel (<project-slug>.<CF_DOMAIN>) to share secrets, manage files in /workspace/nethub/nexus via Filesystem MCP, and operate Claude Code (including --rc Remote Control, /exit, claude --resume, and ttyd) via tmux-mcp.
+description: Attach to and operate an existing isolated Railway Claude Code worker project (<project-slug>) over its Cloudflare Tunnel MCP endpoints (/tmux, /files, /terminal).
 ---
 
-# Operate Claude Worker Skill
+# Skill: Operate Claude Worker (`<project-slug>`)
 
-Requires `<project-slug>` (which resolves to `DOMAIN="https://<project-slug>.${CF_DOMAIN}"`).
+## 1. Bind Chat Session to `<project-slug>`
+Verify operator credentials and save the session parameters to `/tmp/cce-session-<project-slug>.env`:
 
-## 1. Authenticate & Connect (Dual-Wall Security)
-- `MCP_TOKEN=$(./scripts/derive-token.sh "<project-slug>")`
-- Configure remote Streamable HTTP MCP endpoints with all 3 headers (`CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}`, `CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}`, and `Authorization: Bearer ${MCP_TOKEN}`):
-  - `tmux-mcp`: `https://<project-slug>.${CF_DOMAIN}/tmux`
-  - `files-mcp`: `https://<project-slug>.${CF_DOMAIN}/files`
-- **Human Web Terminal (`ttyd`):** Open `https://<project-slug>.${CF_DOMAIN}/terminal` in a browser (authenticated via Cloudflare Zero Trust) to view and type into `claude-work` alongside Codex.
+    export PATH="/workspace/.onboarding/bin:${HOME}/.local/bin:${PATH}"
+    export PROJECT_SLUG="<project-slug>"
+    ./scripts/cce-init.sh --mode operate --skip-cli --skip-validate
 
-## 2. Sharing Secrets
-- Inject environment variables via Railway CLI:
-  `railway variables --set "KEY=VALUE" --service "claude-worker"`
-- Or write `.env` files to `/workspace/nethub/nexus/.env` (or `/workspace/secrets/`) via `files-mcp` (`write_file`).
+    CLEAN_DOMAIN=$(printf '%s' "${CF_DOMAIN}" | tr -d '\r\n ' | sed -E 's/^\*\.//')
+    export WORKER_HOST="${PROJECT_SLUG}.${CLEAN_DOMAIN}"
+    export WORKER_URL="https://${WORKER_HOST}"
 
-## 3. Sharing Files
-- Use `files-mcp` (`write_file`, `edit_file`, `read_file`, `list_directory`) targeting `/workspace/nethub/nexus/` (primary working directory), `/workspace/projects/`, or `/workspace/shared/`.
+    if [ -n "${MCP_BASE_SECRET:-}" ]; then
+      export WORKER_TOKEN="$(./scripts/derive-token.sh "${PROJECT_SLUG}")"
+    else
+      export WORKER_TOKEN="${MCP_BEARER_TOKEN}"
+    fi
 
-## 4. Operating Claude Code + Remote Control (`--rc`) in `claude-work`
-Use `tmux-mcp` targeting the `claude-work` session (rooted in `/workspace/nethub/nexus`):
-- **Check state:** Call `capture-pane` on `claude-work` before sending input.
-- **Start Claude with Remote Control (Interactive Mode):**
-  Send `claude --rc "<project-slug>"` (or `claude --rc "<project-slug>" --dangerously-skip-permissions`) + `Enter` via `send-keys`.
-  *(Note: Never use `claude remote-control` server mode, as it disables the local interactive TUI inside tmux. If Remote Control prompts for full-scope claude.ai OAuth on first run, run `unset CLAUDE_CODE_OAUTH_TOKEN && claude auth login` once inside `claude-work`; credentials persist in `/workspace/.claude`).*
-- **Prompt Claude:** Send prompt text + `Enter` via `send-keys`, then poll `capture-pane`.
-- **Exit to shell:** Send `/exit` + `Enter` via `send-keys` and verify the bash prompt via `capture-pane`.
-- **Resume session with Remote Control:** From bash in `/workspace/nethub/nexus`, send `claude --resume --rc` + `Enter` via `send-keys`.
+    cat <<EOF > "/tmp/cce-session-${PROJECT_SLUG}.env"
+    export PROJECT_SLUG="${PROJECT_SLUG}"
+    export WORKER_HOST="${WORKER_HOST}"
+    export WORKER_URL="${WORKER_URL}"
+    export WORKER_TOKEN="${WORKER_TOKEN}"
+    EOF
+
+## 2. Verify Worker Health
+Check that the worker container and Cloudflare Tunnel are online:
+
+    source "/tmp/cce-session-${PROJECT_SLUG}.env"
+    curl -fsSL "${WORKER_URL}/health" \
+      -H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" \
+      -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}"
+
+If `/health` is unreachable (`530` / `404`), check whether `rw-${PROJECT_SLUG}` exists in Railway (`railway list`) and ask the user if they want to bootstrap `<project-slug>` using `.agents/skills/bootstrap-railway-project/SKILL.md`.
+
+## 3. Execute Remote MCP Tools (`/tmux` & `/files`)
+Use `./scripts/mcp-call.sh` to list or call MCP tools on the worker over SSE/JSON-RPC:
+
+- **List available tools on `/tmux` or `/files`:**
+
+      ./scripts/mcp-call.sh "${PROJECT_SLUG}" tmux tools/list '{}'
+      ./scripts/mcp-call.sh "${PROJECT_SLUG}" files tools/list '{}'
+
+- **Call a tool on `/tmux` (e.g., execute command or read pane output in `claude-work`):**
+
+      ./scripts/mcp-call.sh "${PROJECT_SLUG}" tmux tools/call '{"name":"execute-command","arguments":{"sessionId":"claude-work","command":"git status"}}'
+
+- **Call a tool on `/files` (e.g., list or read `/workspace` files):**
+
+      ./scripts/mcp-call.sh "${PROJECT_SLUG}" files tools/call '{"name":"list_directory","arguments":{"path":"/workspace"}}'
+
+## 4. Human Web Terminal (`/terminal`)
+Share `https://${WORKER_HOST}/terminal` when the user wants to view or type in the live `claude-work` tmux session in their browser.
