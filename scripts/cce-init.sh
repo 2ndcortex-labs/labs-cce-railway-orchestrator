@@ -1,5 +1,13 @@
+---
+
+### 3. `scripts/cce-init.sh`
+Read-only preflight check (no `chmod`), supports `--strict`, and automatically includes `/workspace/.onboarding/bin` and `~/.local/bin` in `PATH`.
+
+```bash
 #!/usr/bin/env bash
 set -euo pipefail
+
+export PATH="/workspace/.onboarding/bin:${HOME}/.local/bin:${PATH}"
 
 MODE="check"
 STRICT=0
