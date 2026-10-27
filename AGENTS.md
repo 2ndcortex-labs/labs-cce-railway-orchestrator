@@ -1,7 +1,7 @@
 # Agent Operating Directives
 
-## 1. Session Startup Rules (MANDATORY — Read First)
-- **DO NOT** automatically run onboarding, project bootstrap, `@railway/cli` installation, or container deployment when a session starts.
-- On your first turn (or whenever asked for status/readiness), run ONLY the non-destructive pre-flight check:
+## 1. Startup Behavior (Read-Only)
+- Do not automatically deploy infrastructure or mutate tracked files on session start.
+- To check environment readiness without changing any files, run:
   ```bash
   ./scripts/cce-init.sh --mode check
