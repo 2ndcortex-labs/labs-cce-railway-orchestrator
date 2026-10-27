@@ -1,12 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MODE="${1:---mode}"
-if [ "${MODE}" = "--mode" ]; then
-  MODE="${2:-check}"
-fi
+MODE="check"
+STRICT=0
 
-chmod +x "$(pwd)/scripts/derive-token.sh" "$(pwd)/scripts/provision-cf-tunnel.sh" 2>/dev/null || true
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --mode)
+      MODE="${2:?Missing value for --mode}"
+      shift 2
+      ;;
+    --strict)
+      STRICT=1
+      shift
+      ;;
+    check|operate|bootstrap)
+      MODE="$1"
+      shift
+      ;;
+    *)
+      echo "Usage: $0 [--mode check|operate|bootstrap] [--strict]" >&2
+      exit 2
+      ;;
+  esac
+done
 
 missing_shared=()
 missing_admin=()
@@ -24,22 +41,20 @@ check_var() {
       missing_admin+=("  - ${var_name}: ${desc}")
     fi
   elif [[ "${val}" == CODEX_NET_SECRET* ]] && [[ "${var_name}" =~ ^(RAILWAY_API_TOKEN|CF_API_TOKEN|MCP_BASE_SECRET|CLAUDE_CODE_OAUTH_TOKEN)$ ]]; then
-    missing_admin+=("  - ${var_name}: Currently set as 'Network secret' (placeholder detected). MUST be moved to 'Environment variable' in Personal Vault!")
+    missing_admin+=("  - ${var_name}: Set as 'Network secret' placeholder; move to 'Environment variable' in Personal Vault")
   fi
 }
 
-# 1. Shared Environment Variables (Needed by everyone to connect to workers)
-check_var "CF_DOMAIN"               "shared" "Set in Shared Cloud Environment -> Environment variables (e.g. yourdomain.com)"
-check_var "CF_ACCESS_CLIENT_ID"     "shared" "Set in Shared Cloud Environment -> Environment variables (CF Service Token ID)"
-check_var "CF_ACCESS_CLIENT_SECRET" "shared" "Set in Shared Cloud Environment -> Network secrets (Allowed domains: *.<CF_DOMAIN>) or Environment variables"
+check_var "CF_DOMAIN"               "shared" "Shared Cloud Environment -> Environment variables (e.g. mytunnels.fyi)"
+check_var "CF_ACCESS_CLIENT_ID"     "shared" "Shared Cloud Environment -> Environment variables"
+check_var "CF_ACCESS_CLIENT_SECRET" "shared" "Shared Cloud Environment -> Network secrets (*.mytunnels.fyi) or Environment variables"
 
-# 2. Admin / Provisioning Variables (Needed only when bootstrapping new Railway projects)
-check_var "MCP_BASE_SECRET"         "admin"  "Set in Personal Vault -> Environment variables (64-char hex from: openssl rand -hex 32)"
-check_var "CLAUDE_CODE_OAUTH_TOKEN" "admin"  "Set in Personal Vault -> Environment variables (from: claude setup-token)"
-check_var "CF_ACCOUNT_ID"           "admin"  "Set in Personal Vault -> Environment variables (32-char Cloudflare Account ID)"
-check_var "CF_ZONE_ID"              "admin"  "Set in Personal Vault -> Environment variables (32-char Cloudflare Zone ID)"
-check_var "CF_API_TOKEN"            "admin"  "Set in Personal Vault -> Environment variables (Cloudflare API token with Tunnel:Edit + DNS:Edit)"
-check_var "RAILWAY_API_TOKEN"       "admin"  "Set in Personal Vault -> Environment variables (Railway Account/Team token)"
+check_var "MCP_BASE_SECRET"         "admin"  "Personal Vault -> Environment variables (openssl rand -hex 32)"
+check_var "CLAUDE_CODE_OAUTH_TOKEN" "admin"  "Personal Vault -> Environment variables (claude setup-token)"
+check_var "CF_ACCOUNT_ID"           "admin"  "Personal Vault -> Environment variables"
+check_var "CF_ZONE_ID"              "admin"  "Personal Vault -> Environment variables"
+check_var "CF_API_TOKEN"            "admin"  "Personal Vault -> Environment variables (Cloudflare API Token)"
+check_var "RAILWAY_API_TOKEN"       "admin"  "Personal Vault -> Environment variables (Railway API Token)"
 
 echo "========================================================================"
 echo " CCE Orchestrator Environment Pre-Flight Check (Mode: ${MODE})"
@@ -48,7 +63,7 @@ echo "========================================================================"
 if [ ${#missing_shared[@]} -eq 0 ]; then
   echo "[OK] Shared Operator Environment Variables: READY"
 else
-  echo "[MISSING] Shared Cloud Environment Settings (Settings > Codex Cloud > Environments):"
+  echo "[MISSING] Shared Cloud Environment Settings:"
   printf '%s\n' "${missing_shared[@]}"
 fi
 
@@ -57,26 +72,25 @@ echo "------------------------------------------------------------------------"
 if [ ${#missing_admin[@]} -eq 0 ]; then
   echo "[OK] Admin Bootstrap Personal Vault Variables: READY"
 else
-  echo "[MISSING/MISCONFIGURED] Admin Personal Vault Settings (Settings > Codex Cloud > Personal vault):"
+  echo "[MISSING/MISCONFIGURED] Admin Personal Vault Settings:"
   printf '%s\n' "${missing_admin[@]}"
-  echo ""
-  echo "  NOTE ON EGRESS PROXY: Keep a dummy Network Secret (e.g. ALLOWLIST_PROXY=1)"
-  echo "  in your Cloud Environment with Allowed domains:"
-  echo "    api.cloudflare.com, backboard.railway.com, *.railway.com, *.railway.app, *.<CF_DOMAIN>"
 fi
 echo "========================================================================"
 
 if [ "${MODE}" = "check" ]; then
+  if [ "${STRICT}" -eq 1 ] && { [ ${#missing_shared[@]} -gt 0 ] || [ ${#missing_admin[@]} -gt 0 ]; }; then
+    exit 1
+  fi
   exit 0
 fi
 
 if [ "${MODE}" = "operate" ]; then
   if [ ${#missing_shared[@]} -gt 0 ]; then
-    echo "ERROR: Cannot operate worker until Shared Cloud Environment variables above are configured." >&2
+    echo "ERROR: Shared Cloud Environment variables are missing." >&2
     exit 1
   fi
   if [ -z "${MCP_BEARER_TOKEN:-}" ] && [ -z "${MCP_BASE_SECRET:-}" ]; then
-    echo "ERROR: Operator requires either MCP_BEARER_TOKEN (teammate) or MCP_BASE_SECRET (admin) in Personal Vault -> Environment variables." >&2
+    echo "ERROR: Operator requires MCP_BEARER_TOKEN or MCP_BASE_SECRET." >&2
     exit 1
   fi
   echo "Operator pre-flight passed."
@@ -85,13 +99,10 @@ fi
 
 if [ "${MODE}" = "bootstrap" ]; then
   if [ ${#missing_shared[@]} -gt 0 ] || [ ${#missing_admin[@]} -gt 0 ]; then
-    echo "ERROR: Cannot bootstrap new project until all missing variables above are set." >&2
+    echo "ERROR: Cannot bootstrap until all shared and admin variables are set." >&2
     exit 1
   fi
 
-  if ! command -v railway >/dev/null 2>&1; then
-    npm install -g @railway/cli
-  fi
-
+  "$(dirname "$0")/install-railway-cli.sh"
   railway whoami
 fi
