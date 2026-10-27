@@ -1,41 +1,61 @@
 ---
 name: bootstrap-railway-project
-description: Provisions a new Railway project, Cloudflare Tunnel (<project-slug>.<CF_DOMAIN>), and persistent Claude Code worker container (with Volume at /workspace/nethub/nexus, ttyd, tmux-mcp, Filesystem MCP, and Remote Control support).
+description: Provision a brand-new isolated Railway project (rw-<project-slug>), persistent /workspace volume, and Cloudflare Tunnel, deploy templates/railway-worker, and attach.
 ---
 
-# Bootstrap Railway Project Skill
+# Skill: Bootstrap Isolated Railway Project (`<project-slug>`)
 
-Require a `<project-slug>` from the operator before running.
+## 1. Verify Admin Pre-Flight & Railway Auth
+Ensure the CLI path is active and verify all admin secrets:
 
-## Execution Steps
+    export PATH="/workspace/.onboarding/bin:${HOME}/.local/bin:${PATH}"
+    ./scripts/cce-init.sh --mode bootstrap --skip-validate
 
-1. **Verify Environment, Derive MCP Token & Provision Cloudflare Tunnel**
-   - `./scripts/cce-init.sh`
-   - `MCP_TOKEN=$(./scripts/derive-token.sh "<project-slug>")`
-   - `CF_TUNNEL_TOKEN=$(./scripts/provision-cf-tunnel.sh "<project-slug>")`
-   - `DOMAIN="https://<project-slug>.${CF_DOMAIN}"`
+## 2. Derive Token & Provision Cloudflare Tunnel + DNS
+Set `PROJECT_SLUG` (lowercase alphanumeric + hyphens) and provision its tunnel and DNS CNAME (`<project-slug>.${CF_DOMAIN}`):
 
-2. **Create Railway Project, Service, and Persistent Volume**
-   - `mkdir -p "/tmp/rw-<project-slug>" && cp -r templates/railway-worker/* "/tmp/rw-<project-slug>/"`
-   - `cd "/tmp/rw-<project-slug>"`
-   - `railway init --name "<project-slug>"`
-   - `railway add --service "claude-worker"`
-   - `railway service "claude-worker"`
-   - `railway volume add --mount-path /workspace`
+    export PROJECT_SLUG="<project-slug>"
+    export WORKER_TOKEN="$(./scripts/derive-token.sh "${PROJECT_SLUG}")"
+    export CF_TUNNEL_TOKEN="$(./scripts/provision-cf-tunnel.sh "${PROJECT_SLUG}")"
 
-3. **Inject Secrets into the Railway Service (Zero Public Railway Ports)**
-   - `railway variables --set "CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN}"`
-   - `railway variables --set "MCP_BEARER_TOKEN=${MCP_TOKEN}"`
-   - `railway variables --set "CF_TUNNEL_TOKEN=${CF_TUNNEL_TOKEN}"`
-   - `railway variables --set "WORKSPACE_DIR=/workspace"`
+## 3. Create Standalone Railway Project (`rw-<project-slug>`) From Temp Staging
+Always stage `templates/railway-worker/` in a temporary directory so the orchestrator git worktree stays clean:
 
-4. **Deploy Worker Container (Outbound Cloudflare Tunnel Only)**
-   - `railway up --detach`
-   - Do NOT run `railway domain` — the container remains dark on Railway's edge and connects outbound via `cloudflared`.
+    STAGE_DIR="$(mktemp -d)"
+    cp -R templates/railway-worker/. "${STAGE_DIR}/"
+    pushd "${STAGE_DIR}" >/dev/null
 
-5. **Register Remote MCP Servers in CCE & Verify Health**
-   - Poll `${DOMAIN}/health` with headers `CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}` and `CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}` until HTTP 200 is returned.
-   - Register remote Streamable HTTP MCP servers with headers `CF-Access-Client-Id`, `CF-Access-Client-Secret`, and `Authorization: Bearer ${MCP_TOKEN}`:
-     - `tmux-mcp`: `${DOMAIN}/tmux`
-     - `files-mcp`: `${DOMAIN}/files`
-   - Web terminal (`ttyd`) is live at `${DOMAIN}/terminal`.
+    railway init --name "rw-${PROJECT_SLUG}"
+    railway add --service "worker"
+    railway service "worker"
+    railway volume add --mount-path /workspace
+
+    railway variables --set \
+      "PROJECT_SLUG=${PROJECT_SLUG}" \
+      "MCP_BEARER_TOKEN=${WORKER_TOKEN}" \
+      "CF_TUNNEL_TOKEN=${CF_TUNNEL_TOKEN}" \
+      "CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN}"
+
+    railway up --detach
+    popd >/dev/null
+    rm -rf "${STAGE_DIR}"
+
+*Security Rule:* Never run `railway domain`. All ingress flows exclusively through the Cloudflare Tunnel.
+
+## 4. Poll `/health` & Transition to Operate Skill
+Wait for Railway to finish building and starting the worker container (typically 60-120 seconds):
+
+    CLEAN_DOMAIN=$(printf '%s' "${CF_DOMAIN}" | tr -d '\r\n ' | sed -E 's/^\*\.//')
+    WORKER_URL="https://${PROJECT_SLUG}.${CLEAN_DOMAIN}"
+    for i in $(seq 1 30); do
+      if curl -fsSL "${WORKER_URL}/health" \
+        -H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" \
+        -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}" 2>/dev/null | grep -q '"ok":true'; then
+        echo "Worker ${PROJECT_SLUG} is ONLINE at ${WORKER_URL}"
+        break
+      fi
+      echo "Waiting for ${WORKER_URL}/health (attempt ${i}/30)..."
+      sleep 5
+    done
+
+Once `/health` returns `{"ok":true}`, immediately follow `.agents/skills/operate-claude-worker/SKILL.md` for `<project-slug>`.
