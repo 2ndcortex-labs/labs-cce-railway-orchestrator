@@ -65,7 +65,6 @@ async function main() {
         if (!postUrl && (data.startsWith("/") || data.startsWith("http"))) {
           postUrl = data.startsWith("http") ? data : new URL(data, workerUrl).toString();
 
-          // 1. Send MCP initialize
           await fetch(postUrl, {
             method: "POST",
             headers: { ...headers, "Content-Type": "application/json" },
@@ -83,7 +82,6 @@ async function main() {
         } else if (data.startsWith("{")) {
           const msg = JSON.parse(data);
           if (msg.id === 1 && postUrl) {
-            // 2. Send initialized notification + target RPC call
             await fetch(postUrl, {
               method: "POST",
               headers: { ...headers, "Content-Type": "application/json" },

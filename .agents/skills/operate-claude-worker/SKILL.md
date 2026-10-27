@@ -22,12 +22,12 @@ Verify operator credentials and save the session parameters to `/tmp/cce-session
       export WORKER_TOKEN="${MCP_BEARER_TOKEN}"
     fi
 
-    cat <<EOF > "/tmp/cce-session-${PROJECT_SLUG}.env"
+    cat <<EOF2 > "/tmp/cce-session-${PROJECT_SLUG}.env"
     export PROJECT_SLUG="${PROJECT_SLUG}"
     export WORKER_HOST="${WORKER_HOST}"
     export WORKER_URL="${WORKER_URL}"
     export WORKER_TOKEN="${WORKER_TOKEN}"
-    EOF
+    EOF2
 
 ## 2. Verify Worker Health
 Check that the worker container and Cloudflare Tunnel are online:
