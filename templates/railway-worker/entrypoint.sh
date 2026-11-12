@@ -3,13 +3,9 @@ set -euo pipefail
 
 export WORKSPACE_DIR="${WORKSPACE_DIR:-/workspace}"
 export TMUX_SESSION="${TMUX_SESSION:-claude-work}"
-export CORHUB_REPO_URL="${CORHUB_REPO_URL:-https://github.com/2ndcortex-labs/corhub.git}"
+export CORHUB_REPO_URL="${CORHUB_REPO_URL:-https://github.com/2ndcortex-labs/corhub}"
 
 mkdir -p "${WORKSPACE_DIR}"
-cd "${WORKSPACE_DIR}"
-
-# Configure git safe directory for persistent Railway volume mounts
-git config --global --add safe.directory "${WORKSPACE_DIR}" || true
 
 # Configure GitHub token auth if GH_TOKEN or GITHUB_TOKEN is provided
 if [ -n "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ]; then
@@ -18,47 +14,97 @@ if [ -n "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 1. Idempotent First-Boot Seeding of /workspace with corhub
+# 1. Directive 2: Idempotent Claude Code Project Instance Setup in <root> (/workspace)
 # ---------------------------------------------------------------------------
-if [ ! -d "${WORKSPACE_DIR}/.claude" ]; then
-  echo "[entrypoint] First boot detected on persistent volume. Seeding ${WORKSPACE_DIR} with corhub..."
-  TMP_SEED="$(mktemp -d)"
-  if git clone --depth 1 "${CORHUB_REPO_URL}" "${TMP_SEED}/corhub" 2>/dev/null; then
-    cp -a "${TMP_SEED}/corhub/." "${WORKSPACE_DIR}/"
-  elif [ -d "/opt/corhub-seed/.claude" ]; then
-    echo "[entrypoint] Live git clone unavailable; seeding from baked-in /opt/corhub-seed..."
-    cp -a /opt/corhub-seed/. "${WORKSPACE_DIR}/"
-  else
-    echo "[entrypoint] WARNING: Could not seed corhub from git or /opt/corhub-seed."
+setup_corhub_instance() {
+  local root="${WORKSPACE_DIR}"
+
+  # If already set up on persistent volume, skip installation
+  if [ -d "${root}/corhub" ] || [ -e "${root}/CLAUDE.md" ]; then
+    echo "[entrypoint] Existing instance detected in ${root} (corhub/ or CLAUDE.md present). Skipping fresh clone."
+    return 0
   fi
-  rm -rf "${TMP_SEED}"
-fi
 
-# Ensure corhub bin utilities and scripts are executable
-if [ -d "${WORKSPACE_DIR}/bin" ]; then
-  chmod +x "${WORKSPACE_DIR}/bin/"* 2>/dev/null || true
-fi
+  echo "[entrypoint] Setting up new Claude Code project instance in ${root}..."
 
-# Seed nexus/ from skeleton/nexus/ on first boot if nexus/roadwork is not initialized yet
-if [ -d "${WORKSPACE_DIR}/skeleton/nexus" ] && [ ! -d "${WORKSPACE_DIR}/nexus/roadwork" ]; then
-  echo "[entrypoint] Initializing ${WORKSPACE_DIR}/nexus from skeleton/nexus..."
-  mkdir -p "${WORKSPACE_DIR}/nexus"
-  cp -rn "${WORKSPACE_DIR}/skeleton/nexus/." "${WORKSPACE_DIR}/nexus/" 2>/dev/null || \
-    cp -a "${WORKSPACE_DIR}/skeleton/nexus/." "${WORKSPACE_DIR}/nexus/"
-fi
+  # Step 2: git clone https://github.com/2ndcortex-labs/corhub <root>/corhub (Default branch, no options)
+  git clone "${CORHUB_REPO_URL}" "${root}/corhub"
 
-# Install unlazy hooks into .claude/settings.json if present
-if [ -f "${WORKSPACE_DIR}/.claude/skills/unlazy/scripts/install-hooks.mjs" ]; then
-  echo "[entrypoint] Installing unlazy hooks in ${WORKSPACE_DIR}..."
-  (cd "${WORKSPACE_DIR}" && node .claude/skills/unlazy/scripts/install-hooks.mjs) || \
-    echo "[entrypoint] WARNING: install-hooks.mjs returned non-zero; continuing startup."
-fi
+  # Step 3: Copy <root>/corhub/skeleton/beacon/CLAUDE.md to <root>/CLAUDE.md
+  if [ ! -f "${root}/corhub/skeleton/beacon/CLAUDE.md" ]; then
+    echo "[entrypoint] ERROR: Missing template ${root}/corhub/skeleton/beacon/CLAUDE.md" >&2
+    return 1
+  fi
+  cp "${root}/corhub/skeleton/beacon/CLAUDE.md" "${root}/CLAUDE.md"
+
+  # Step 4: Verify and record each result
+  local commit_hash
+  commit_hash="$(git -C "${root}/corhub" rev-parse HEAD)"
+
+  local v_git="FAIL"
+  [ -d "${root}/corhub/.git" ] && v_git="PASS"
+
+  local v_beacon="FAIL"
+  if [ -f "${root}/CLAUDE.md" ] && [ "$(head -n 1 "${root}/CLAUDE.md" | tr -d '\r')" = "# Root beacon" ]; then
+    v_beacon="PASS"
+  fi
+
+  local v_nexus="FAIL"
+  if [ -d "${root}/corhub/nexus" ]; then
+    local entries
+    entries="$(ls -A "${root}/corhub/nexus")"
+    [ "${entries}" = ".gitkeep" ] && v_nexus="PASS"
+  fi
+
+  local v_files="PASS"
+  local missing_items=()
+  for req in \
+    "${root}/corhub/CLAUDE.md" \
+    "${root}/corhub/bin/nexus-git" \
+    "${root}/corhub/.claude/rules/roadwork-constitution.md" \
+    "${root}/corhub/.claude/skills/MANIFEST" \
+    "${root}/corhub/.claude/agents" \
+    "${root}/corhub/skeleton/nexus"; do
+    if [ ! -e "${req}" ]; then
+      v_files="FAIL"
+      missing_items+=("${req}")
+    fi
+  done
+
+  local v_no_nexus_git="FAIL"
+  [ ! -e "${root}/corhub/.nexus-git" ] && v_no_nexus_git="PASS"
+
+  {
+    echo "=== Directive 2 Instance Report ==="
+    echo "Root: ${root}"
+    echo "Corhub Commit: ${commit_hash}"
+    echo "Check 1 (<root>/corhub/.git/ is a directory): ${v_git}"
+    echo "Check 2 (<root>/CLAUDE.md exists & first line is '# Root beacon'): ${v_beacon}"
+    echo "Check 3 (<root>/corhub/nexus/ contains only .gitkeep): ${v_nexus}"
+    echo "Check 4 (Required corhub files/dirs exist): ${v_files} ${missing_items[*]:-}"
+    echo "Check 5 (<root>/corhub/.nexus-git/ does not exist): ${v_no_nexus_git}"
+    echo ""
+    echo "Launch command:"
+    echo "cd ${root}/corhub/nexus && claude --add-dir ${root}"
+    echo "Note: The session launched from there will ask for the project's git remote URL on first run; the human should have an empty GitHub repository ready for it."
+  } | tee "${root}/.corhub-instance-report.txt"
+
+  if [ "${v_git}" != "PASS" ] || [ "${v_beacon}" != "PASS" ] || [ "${v_nexus}" != "PASS" ] || [ "${v_files}" != "PASS" ] || [ "${v_no_nexus_git}" != "PASS" ]; then
+    echo "[entrypoint] ERROR: Directive 2 verification failed!" >&2
+    return 1
+  fi
+}
+
+setup_corhub_instance
 
 # ---------------------------------------------------------------------------
-# 2. Ensure Persistent Tmux Session (claude-work) Rooted at /workspace
+# 2. Ensure Persistent Tmux Session (claude-work) Rooted at <root>/corhub/nexus
 # ---------------------------------------------------------------------------
+LAUNCH_DIR="${WORKSPACE_DIR}/corhub/nexus"
+[ -d "${LAUNCH_DIR}" ] || LAUNCH_DIR="${WORKSPACE_DIR}"
+
 if ! tmux has-session -t "${TMUX_SESSION}" 2>/dev/null; then
-  tmux new-session -d -s "${TMUX_SESSION}" -c "${WORKSPACE_DIR}"
+  tmux new-session -d -s "${TMUX_SESSION}" -c "${LAUNCH_DIR}"
 fi
 
 # ---------------------------------------------------------------------------

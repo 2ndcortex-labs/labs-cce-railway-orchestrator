@@ -29,10 +29,6 @@ RUN npm install -g \
     @modelcontextprotocol/server-filesystem \
     tmux-mcp
 
-# Pre-cache corhub workspace skeleton for fast, reliable first-boot volume seeding
-ARG CORHUB_REPO_URL="https://github.com/2ndcortex-labs/corhub.git"
-RUN git clone --depth 1 "${CORHUB_REPO_URL}" /opt/corhub-seed || mkdir -p /opt/corhub-seed
-
 WORKDIR /app
 COPY gateway.mjs /app/gateway.mjs
 COPY entrypoint.sh /app/entrypoint.sh
