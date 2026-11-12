@@ -48,13 +48,11 @@ Every worker volume (`/workspace`) is structured according to Directive 2:
 
 **First-Attach Check & Launch Command:**
 1. Inspect `/workspace/.corhub-instance-report.txt` via `/files` MCP to confirm all 5 Directive 2 checks passed.
-2. Always launch Claude Code inside the `claude-work` tmux session from `/workspace/corhub/nexus` using the exact command:
+2. Always launch Claude Code inside the `claude-work` tmux session from `/workspace/corhub/nexus` with `--add-dir /workspace`:
 
-       cd /workspace/corhub/nexus && claude
+       cd /workspace/corhub/nexus && claude --add-dir /workspace
 
-3. **First-Run Project Initialization & Folder Permissions:**
-   - The session launched from `/workspace/corhub/nexus` will ask for the project's git remote URL on first run; the human should have an empty GitHub repository ready for it.
-   - Claude Code will ask permission the first time the session reaches a folder outside `nexus/`, which the operator/human approves.
+3. **First-Run Project Initialization:** On a newly bootstrapped worker where `/workspace/corhub/nexus` contains only `.gitkeep`, the Claude Code session launched from `corhub/nexus` will initialize `nexus/` from `skeleton/nexus/` and ask the human for the project's empty GitHub repository remote URL. Prompt the user for that URL when Claude requests it.
 
 ## 4. Execute Remote MCP Tools (`/tmux` & `/files`)
 Use `./scripts/mcp-call.sh` to list or call MCP tools on the worker over SSE/JSON-RPC:
@@ -70,7 +68,7 @@ Use `./scripts/mcp-call.sh` to list or call MCP tools on the worker over SSE/JSO
 
 - **Call a tool on `/tmux` (e.g., launch Claude or run a command in `claude-work`):**
 
-      ./scripts/mcp-call.sh "${PROJECT_SLUG}" tmux tools/call '{"name":"execute-command","arguments":{"sessionId":"claude-work","command":"cd /workspace/corhub/nexus && claude"}}'
+      ./scripts/mcp-call.sh "${PROJECT_SLUG}" tmux tools/call '{"name":"execute-command","arguments":{"sessionId":"claude-work","command":"cd /workspace/corhub/nexus && claude --add-dir /workspace"}}'
 
 ## 5. Human Web Terminal (`/terminal`)
 Share `https://${WORKER_HOST}/terminal` when the user wants to view or type in the live `claude-work` tmux session in their browser.
