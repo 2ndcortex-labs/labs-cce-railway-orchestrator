@@ -39,7 +39,24 @@ Check that the worker container and Cloudflare Tunnel are online:
 
 If `/health` is unreachable (`530` / `404`), check whether `rw-${PROJECT_SLUG}` exists in Railway (`railway list`) and ask the user if they want to bootstrap `<project-slug>` using `.agents/skills/bootstrap-railway-project/SKILL.md`.
 
-## 3. Execute Remote MCP Tools (`/tmux` & `/files`)
+## 3. Directive 2 Instance Layout & Launching Claude Code
+Every worker volume (`/workspace`) is structured according to Directive 2:
+- `/workspace/CLAUDE.md` — Root beacon (`# Root beacon`) that stops Claude if launched in `/workspace` directly.
+- `/workspace/corhub/` — Full clone of `2ndcortex-labs/corhub`.
+- `/workspace/corhub/nexus/` — The project folder where `claude-work` tmux starts and where Claude Code MUST be launched.
+- `/workspace/.corhub-instance-report.txt` — Verification report generated on first container boot.
+
+**First-Attach Check & Launch Command:**
+1. Inspect `/workspace/.corhub-instance-report.txt` via `/files` MCP to confirm all 5 Directive 2 checks passed.
+2. Always launch Claude Code inside the `claude-work` tmux session from `/workspace/corhub/nexus` using the exact command:
+
+       cd /workspace/corhub/nexus && claude
+
+3. **First-Run Project Initialization & Folder Permissions:**
+   - The session launched from `/workspace/corhub/nexus` will ask for the project's git remote URL on first run; the human should have an empty GitHub repository ready for it.
+   - Claude Code will ask permission the first time the session reaches a folder outside `nexus/`, which the operator/human approves.
+
+## 4. Execute Remote MCP Tools (`/tmux` & `/files`)
 Use `./scripts/mcp-call.sh` to list or call MCP tools on the worker over SSE/JSON-RPC:
 
 - **List available tools on `/tmux` or `/files`:**
@@ -47,13 +64,13 @@ Use `./scripts/mcp-call.sh` to list or call MCP tools on the worker over SSE/JSO
       ./scripts/mcp-call.sh "${PROJECT_SLUG}" tmux tools/list '{}'
       ./scripts/mcp-call.sh "${PROJECT_SLUG}" files tools/list '{}'
 
-- **Call a tool on `/tmux` (e.g., execute command or read pane output in `claude-work`):**
+- **Read the Directive 2 verification report via `/files`:**
 
-      ./scripts/mcp-call.sh "${PROJECT_SLUG}" tmux tools/call '{"name":"execute-command","arguments":{"sessionId":"claude-work","command":"git status"}}'
+      ./scripts/mcp-call.sh "${PROJECT_SLUG}" files tools/call '{"name":"read_file","arguments":{"path":"/workspace/.corhub-instance-report.txt"}}'
 
-- **Call a tool on `/files` (e.g., list or read `/workspace` files):**
+- **Call a tool on `/tmux` (e.g., launch Claude or run a command in `claude-work`):**
 
-      ./scripts/mcp-call.sh "${PROJECT_SLUG}" files tools/call '{"name":"list_directory","arguments":{"path":"/workspace"}}'
+      ./scripts/mcp-call.sh "${PROJECT_SLUG}" tmux tools/call '{"name":"execute-command","arguments":{"sessionId":"claude-work","command":"cd /workspace/corhub/nexus && claude"}}'
 
-## 4. Human Web Terminal (`/terminal`)
+## 5. Human Web Terminal (`/terminal`)
 Share `https://${WORKER_HOST}/terminal` when the user wants to view or type in the live `claude-work` tmux session in their browser.

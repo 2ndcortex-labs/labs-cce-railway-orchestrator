@@ -85,8 +85,8 @@ setup_corhub_instance() {
     echo "Check 5 (<root>/corhub/.nexus-git/ does not exist): ${v_no_nexus_git}"
     echo ""
     echo "Launch command:"
-    echo "cd ${root}/corhub/nexus && claude --add-dir ${root}"
-    echo "Note: The session launched from there will ask for the project's git remote URL on first run; the human should have an empty GitHub repository ready for it."
+    echo "cd ${root}/corhub/nexus && claude"
+    echo "Note: The session launched from there will ask for the project's git remote URL on first run; the human should have an empty GitHub repository ready for it; and Claude Code will ask permission the first time the session reaches a folder outside nexus/, which the human approves."
   } | tee "${root}/.corhub-instance-report.txt"
 
   if [ "${v_git}" != "PASS" ] || [ "${v_beacon}" != "PASS" ] || [ "${v_nexus}" != "PASS" ] || [ "${v_files}" != "PASS" ] || [ "${v_no_nexus_git}" != "PASS" ]; then
