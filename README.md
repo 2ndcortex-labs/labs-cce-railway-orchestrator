@@ -8,6 +8,8 @@ In this architecture, **1 Codex Chat Session = 1 Target Railway Project (`<proje
 
 ## 1. Per-Chat Operational Workflows (Daily Usage)
 
+Every new chat session loads `.agents/skills/orchestrate-claude/SKILL.md`, which immediately prompts you to choose between **Operate (1)**, **Bootstrap (2)**, or **Fleet Discovery (3)** (or jumps straight to your choice if you already named a `<project-slug>`).
+
 Open a new chat in Codex Cloud and tell the agent which `<project-slug>` you want to work on. `AGENTS.md` automatically routes the chat to the right operational workflow:
 
 ### A. Operate an Existing Project (`operate <project-slug>`)

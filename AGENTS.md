@@ -30,6 +30,8 @@ This repository supports two distinct agent execution contexts in Codex Cloud. I
 
 ## Context B: Multi-Project Railway Operations (Per-Chat Operational Instructions)
 
+**Default Entry-Point Skill:** At the start of every Context B chat session, read and follow `.agents/skills/orchestrate-claude/SKILL.md` to route between Operating an existing project, Bootstrapping a new project, or Fleet Discovery.
+
 **Trigger:** You are in an interactive chat session helping a user create, operate, or manage Railway projects.
 
 ### Step 0: Fast Session Initialization (Run Once Per Chat)
