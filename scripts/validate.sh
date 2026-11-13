@@ -39,7 +39,7 @@ node --input-type=module << 'NODE_EOF'
 import http from 'node:http';
 import assert from 'node:assert/strict';
 
-process.env.MCP_BEARER_TOKEN = 'test-secret-token-12345';
+process.env.SCL_MCP_BEARER_TOKEN = 'test-secret-token-12345';
 process.env.TMUX_MCP_PORT = '18001';
 process.env.TTYD_PORT = '17681';
 
@@ -82,7 +82,7 @@ try {
 NODE_EOF
 
 echo "6. Testing deterministic token derivation..."
-TEST_OUT="$(MCP_BASE_SECRET="unit-test-secret" ./scripts/derive-token.sh "sample-slug")"
+TEST_OUT="$(SCL_MCP_BASE_SECRET="unit-test-secret" ./scripts/derive-token.sh "sample-slug")"
 if [ "${#TEST_OUT}" -ne 64 ]; then
   echo "ERROR: Expected 64-char hex token from derive-token.sh, got: ${TEST_OUT}" >&2
   exit 1

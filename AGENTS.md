@@ -43,7 +43,7 @@ Ensure the CLI path is loaded in your shell without re-running validation:
 
 **Strict Operational Rules:**
 - **1 Chat Session = 1 Target Railway Project (`<project-slug>`).**
-- **1 `<project-slug>` = 1 Standalone Railway Project (`rw-<project-slug>`)** with its own persistent `/workspace` volume and dedicated Cloudflare Tunnel (`https://<project-slug>.${CF_DOMAIN}`).
+- **1 `<project-slug>` = 1 Standalone Railway Project (`rw-<project-slug>`)** with its own persistent `/workspace` volume and dedicated Cloudflare Tunnel (`https://<project-slug>.${SCL_CF_DOMAIN}`).
 - **Never Mutate This Orchestrator Repo:** Never clone user application code or write project files into `/workspace/labs-cce-railway-orchestrator`. Store per-chat state in `/tmp/cce-session-<project-slug>.env` and execute all coding/file tasks remotely on the target Railway container.
 
 ---
@@ -54,14 +54,14 @@ If the user starts a chat without naming a `<project-slug>` or asks what project
 
 1. **List Active Cloudflare Tunnels (`rw-*`) and Railway Projects:**
 
-       CLEAN_TOKEN=$(printf '%s' "${CF_API_TOKEN:-}" | tr -d '\r\n' | sed -E 's/^[[:space:]"'"'"']+//; s/[[:space:]"'"'"']+$//; s/^Bearer[[:space:]]+//I')
-       if [ -n "${CLEAN_TOKEN}" ] && [ -n "${CF_ACCOUNT_ID:-}" ]; then
-         curl -fsSL "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/cfd_tunnel?is_deleted=false" \
+       CLEAN_TOKEN=$(printf '%s' "${SCL_CF_API_TOKEN:-}" | tr -d '\r\n' | sed -E 's/^[[:space:]"'"'"']+//; s/[[:space:]"'"'"']+$//; s/^Bearer[[:space:]]+//I')
+       if [ -n "${CLEAN_TOKEN}" ] && [ -n "${SCL_CF_ACCOUNT_ID:-}" ]; then
+         curl -fsSL "https://api.cloudflare.com/client/v4/accounts/${SCL_CF_ACCOUNT_ID}/cfd_tunnel?is_deleted=false" \
            -H "Authorization: Bearer ${CLEAN_TOKEN}" \
            | jq -r '.result[] | select(.name | startswith("rw-")) | "\(.name)\t\(.status)\t\(.id)"'
        fi
-       if [ -n "${RAILWAY_API_TOKEN:-}" ]; then
-         RAILWAY_API_TOKEN="${RAILWAY_API_TOKEN}" railway list || true
+       if [ -n "${SCL_RAILWAY_API_TOKEN:-}" ]; then
+         RAILWAY_API_TOKEN="${SCL_RAILWAY_API_TOKEN}" railway list || true
        fi
 
 2. **Ask the User:** Present the discovered `<project-slug>` names (stripping the `rw-` prefix) and ask which `<project-slug>` this chat should attach to (`operate`) or if they want to provision a new one (`bootstrap`).
@@ -76,13 +76,13 @@ Use this workflow whenever the user names an existing `<project-slug>` or asks t
 
        export PROJECT_SLUG="<project-slug>"
        ./scripts/cce-init.sh --mode operate --skip-cli --skip-validate
-       CLEAN_DOMAIN=$(printf '%s' "${CF_DOMAIN}" | tr -d '\r\n ' | sed -E 's/^\*\.//')
+       CLEAN_DOMAIN=$(printf '%s' "${SCL_CF_DOMAIN}" | tr -d '\r\n ' | sed -E 's/^\*\.//')
        export WORKER_HOST="${PROJECT_SLUG}.${CLEAN_DOMAIN}"
        export WORKER_URL="https://${WORKER_HOST}"
-       if [ -n "${MCP_BASE_SECRET:-}" ]; then
+       if [ -n "${SCL_MCP_BASE_SECRET:-}" ]; then
          export WORKER_TOKEN="$(./scripts/derive-token.sh "${PROJECT_SLUG}")"
        else
-         export WORKER_TOKEN="${MCP_BEARER_TOKEN}"
+         export WORKER_TOKEN="${SCL_MCP_BEARER_TOKEN}"
        fi
        cat <<EOF> "/tmp/cce-session-${PROJECT_SLUG}.env"
        export PROJECT_SLUG="${PROJECT_SLUG}"
@@ -95,16 +95,16 @@ Use this workflow whenever the user names an existing `<project-slug>` or asks t
 
        source "/tmp/cce-session-${PROJECT_SLUG}.env"
        curl -fsSL "${WORKER_URL}/health" \
-         -H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" \
-         -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}"
+         -H "CF-Access-Client-Id: ${SCL_CF_ACCESS_CLIENT_ID}" \
+         -H "CF-Access-Client-Secret: ${SCL_CF_ACCESS_CLIENT_SECRET}"
 
    - If `/health` returns `{"ok":true,...}`, the worker is online and ready.
    - If `/health` fails (`530`, `404`, or unreachable), check if `rw-${PROJECT_SLUG}` exists in Railway. If it does not exist, ask the user if they want you to run **Workflow B3 (Bootstrap)** for `<project-slug>`.
 
 3. **Execute Commands & File Operations Remotely on `<project-slug>`:**
    Every request to `/tmux` or `/files` MUST include all three authentication headers:
-   - `-H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}"`
-   - `-H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}"`
+   - `-H "CF-Access-Client-Id: ${SCL_CF_ACCESS_CLIENT_ID}"`
+   - `-H "CF-Access-Client-Secret: ${SCL_CF_ACCESS_CLIENT_SECRET}"`
    - `-H "Authorization: Bearer ${WORKER_TOKEN}"`
 
    **Remote Endpoints on `${WORKER_URL}`:**
@@ -129,7 +129,7 @@ Use this workflow when the user asks to create, spin up, or bootstrap a new `<pr
        export WORKER_TOKEN="$(./scripts/derive-token.sh "${PROJECT_SLUG}")"
        export CF_TUNNEL_TOKEN="$(./scripts/provision-cf-tunnel.sh "${PROJECT_SLUG}")"
 
-   This idempotently creates Cloudflare Tunnel `rw-${PROJECT_SLUG}`, configures ingress to `http://127.0.0.1:8080`, and sets the proxied DNS CNAME `<project-slug>.${CF_DOMAIN}`.
+   This idempotently creates Cloudflare Tunnel `rw-${PROJECT_SLUG}`, configures ingress to `http://127.0.0.1:8080`, and sets the proxied DNS CNAME `<project-slug>.${SCL_CF_DOMAIN}`.
 
 3. **Create Isolated Railway Project (`rw-<project-slug>`), Volume, and Deploy Worker:**
    Always run `railway init` and `railway up` from a temporary directory so the orchestrator git worktree stays clean:
@@ -147,7 +147,7 @@ Use this workflow when the user asks to create, spin up, or bootstrap a new `<pr
          "PROJECT_SLUG=${PROJECT_SLUG}" \
          "MCP_BEARER_TOKEN=${WORKER_TOKEN}" \
          "CF_TUNNEL_TOKEN=${CF_TUNNEL_TOKEN}" \
-         "CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN}"
+         "CLAUDE_CODE_OAUTH_TOKEN=${SCL_CLAUDE_CODE_OAUTH_TOKEN}"
 
        railway up --detach
        popd >/dev/null
@@ -158,12 +158,12 @@ Use this workflow when the user asks to create, spin up, or bootstrap a new `<pr
 4. **Wait for Worker Health & Transition to Operate Mode:**
    Poll the worker's `/health` endpoint until Railway finishes building the container (typically 60–120 seconds):
 
-       CLEAN_DOMAIN=$(printf '%s' "${CF_DOMAIN}" | tr -d '\r\n ' | sed -E 's/^\*\.//')
+       CLEAN_DOMAIN=$(printf '%s' "${SCL_CF_DOMAIN}" | tr -d '\r\n ' | sed -E 's/^\*\.//')
        WORKER_URL="https://${PROJECT_SLUG}.${CLEAN_DOMAIN}"
        for i in $(seq 1 30); do
          if curl -fsSL "${WORKER_URL}/health" \
-           -H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" \
-           -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}" 2>/dev/null | grep -q '"ok":true'; then
+           -H "CF-Access-Client-Id: ${SCL_CF_ACCESS_CLIENT_ID}" \
+           -H "CF-Access-Client-Secret: ${SCL_CF_ACCESS_CLIENT_SECRET}" 2>/dev/null | grep -q '"ok":true'; then
            echo "Worker ${PROJECT_SLUG} is ONLINE at ${WORKER_URL}"
            break
          fi

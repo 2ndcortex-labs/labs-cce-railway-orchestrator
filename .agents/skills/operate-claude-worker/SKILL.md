@@ -12,14 +12,18 @@ Verify operator credentials and save the session parameters to `/tmp/cce-session
     export PROJECT_SLUG="<project-slug>"
     ./scripts/cce-init.sh --mode operate --skip-cli --skip-validate
 
-    CLEAN_DOMAIN=$(printf '%s' "${CF_DOMAIN}" | tr -d '\r\n ' | sed -E 's/^\*\.//')
+    if [ -f "/tmp/cce-session-${PROJECT_SLUG}.env" ]; then
+      source "/tmp/cce-session-${PROJECT_SLUG}.env"
+    fi
+
+    CLEAN_DOMAIN=$(printf '%s' "${SCL_CF_DOMAIN}" | tr -d '\r\n ' | sed -E 's/^\*\.//')
     export WORKER_HOST="${PROJECT_SLUG}.${CLEAN_DOMAIN}"
     export WORKER_URL="https://${WORKER_HOST}"
 
-    if [ -n "${MCP_BASE_SECRET:-}" ]; then
+    if [ -n "${SCL_MCP_BASE_SECRET:-}" ]; then
       export WORKER_TOKEN="$(./scripts/derive-token.sh "${PROJECT_SLUG}")"
     else
-      export WORKER_TOKEN="${MCP_BEARER_TOKEN}"
+      export WORKER_TOKEN="${SCL_MCP_BEARER_TOKEN}"
     fi
 
     cat <<EOF2 > "/tmp/cce-session-${PROJECT_SLUG}.env"
@@ -27,6 +31,7 @@ Verify operator credentials and save the session parameters to `/tmp/cce-session
     export WORKER_HOST="${WORKER_HOST}"
     export WORKER_URL="${WORKER_URL}"
     export WORKER_TOKEN="${WORKER_TOKEN}"
+    export NEXUS_GIT_REMOTE="${NEXUS_GIT_REMOTE:-}"
     EOF2
 
 ## 2. Verify Worker Health
@@ -34,10 +39,10 @@ Check that the worker container and Cloudflare Tunnel are online:
 
     source "/tmp/cce-session-${PROJECT_SLUG}.env"
     curl -fsSL "${WORKER_URL}/health" \
-      -H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" \
-      -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}"
+      -H "CF-Access-Client-Id: ${SCL_CF_ACCESS_CLIENT_ID}" \
+      -H "CF-Access-Client-Secret: ${SCL_CF_ACCESS_CLIENT_SECRET}"
 
-If `/health` is unreachable (`530` / `404`), check whether `rw-${PROJECT_SLUG}` exists in Railway (`railway list`) and ask the user if they want to bootstrap `<project-slug>` using `.agents/skills/bootstrap-railway-project/SKILL.md`.
+If `/health` is unreachable (`530` / `404`), check whether `rw-${PROJECT_SLUG}` exists in Railway (`RAILWAY_API_TOKEN="${SCL_RAILWAY_API_TOKEN}" railway list`) and ask the user if they want to bootstrap `<project-slug>` using `.agents/skills/bootstrap-railway-project/SKILL.md`.
 
 ## 3. Directive 2 Instance Layout & Launching Claude Code
 Every worker volume (`/workspace`) is structured according to Directive 2:
@@ -48,11 +53,13 @@ Every worker volume (`/workspace`) is structured according to Directive 2:
 
 **First-Attach Check & Launch Command:**
 1. Inspect `/workspace/.corhub-instance-report.txt` via `/files` MCP to confirm all 5 Directive 2 checks passed.
-2. Always launch Claude Code inside the `claude-work` tmux session from `/workspace/corhub/nexus` with `--add-dir /workspace`:
+2. Always launch Claude Code inside the `claude-work` tmux session from `/workspace/corhub/nexus` using the exact command:
 
-       cd /workspace/corhub/nexus && claude --add-dir /workspace
+       cd /workspace/corhub/nexus && claude
 
-3. **First-Run Project Initialization:** On a newly bootstrapped worker where `/workspace/corhub/nexus` contains only `.gitkeep`, the Claude Code session launched from `corhub/nexus` will initialize `nexus/` from `skeleton/nexus/` and ask the human for the project's empty GitHub repository remote URL. Prompt the user for that URL when Claude requests it.
+3. **First-Run Project Initialization & Folder Permissions:**
+   - The session launched from `/workspace/corhub/nexus` will ask for the project's git remote URL on first run. If `NEXUS_GIT_REMOTE` was already provided during bootstrap, supply it to Claude Code; otherwise prompt the user for the empty GitHub repository URL.
+   - Claude Code will ask permission the first time the session reaches a folder outside `nexus/`, which the operator/human approves.
 
 ## 4. Execute Remote MCP Tools (`/tmux` & `/files`)
 Use `./scripts/mcp-call.sh` to list or call MCP tools on the worker over SSE/JSON-RPC:
@@ -68,7 +75,7 @@ Use `./scripts/mcp-call.sh` to list or call MCP tools on the worker over SSE/JSO
 
 - **Call a tool on `/tmux` (e.g., launch Claude or run a command in `claude-work`):**
 
-      ./scripts/mcp-call.sh "${PROJECT_SLUG}" tmux tools/call '{"name":"execute-command","arguments":{"sessionId":"claude-work","command":"cd /workspace/corhub/nexus && claude --add-dir /workspace"}}'
+      ./scripts/mcp-call.sh "${PROJECT_SLUG}" tmux tools/call '{"name":"execute-command","arguments":{"sessionId":"claude-work","command":"cd /workspace/corhub/nexus && claude"}}'
 
 ## 5. Human Web Terminal (`/terminal`)
 Share `https://${WORKER_HOST}/terminal` when the user wants to view or type in the live `claude-work` tmux session in their browser.

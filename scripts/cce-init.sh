@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Bridge SCL_RAILWAY_API_TOKEN to RAILWAY_API_TOKEN for native Railway CLI
+if [ -n "${SCL_RAILWAY_API_TOKEN:-}" ]; then
+  export RAILWAY_API_TOKEN="${SCL_RAILWAY_API_TOKEN}"
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ONBOARDING_BIN="/workspace/.onboarding/bin"
@@ -114,21 +119,21 @@ check_var() {
     else
       missing_admin+=("  - ${var_name}: ${desc}")
     fi
-  elif [[ "${val}" == CODEX_NET_SECRET* ]] && [[ "${var_name}" =~ ^(RAILWAY_API_TOKEN|CF_API_TOKEN|MCP_BASE_SECRET|CLAUDE_CODE_OAUTH_TOKEN)$ ]]; then
+  elif [[ "${val}" == CODEX_NET_SECRET* ]] && [[ "${var_name}" =~ ^(SCL_RAILWAY_API_TOKEN|SCL_CF_API_TOKEN|SCL_MCP_BASE_SECRET|SCL_CLAUDE_CODE_OAUTH_TOKEN)$ ]]; then
     missing_admin+=("  - ${var_name}: Set as 'Network secret' placeholder; move to 'Environment variable' in Personal Vault")
   fi
 }
 
-check_var "CF_DOMAIN"               "shared" "Shared Cloud Environment -> Environment variables (e.g. mytunnels.fyi)"
-check_var "CF_ACCESS_CLIENT_ID"     "shared" "Shared Cloud Environment -> Environment variables"
-check_var "CF_ACCESS_CLIENT_SECRET" "shared" "Shared Cloud Environment -> Network secrets (*.mytunnels.fyi) or Environment variables"
+check_var "SCL_CF_DOMAIN"               "shared" "Shared Cloud Environment -> Environment variables (e.g. mytunnels.fyi)"
+check_var "SCL_CF_ACCESS_CLIENT_ID"     "shared" "Shared Cloud Environment -> Environment variables"
+check_var "SCL_CF_ACCESS_CLIENT_SECRET" "shared" "Shared Cloud Environment -> Network secrets (*.mytunnels.fyi) or Environment variables"
 
-check_var "MCP_BASE_SECRET"         "admin"  "Personal Vault -> Environment variables (openssl rand -hex 32)"
-check_var "CLAUDE_CODE_OAUTH_TOKEN" "admin"  "Personal Vault -> Environment variables (claude setup-token)"
-check_var "CF_ACCOUNT_ID"           "admin"  "Personal Vault -> Environment variables"
-check_var "CF_ZONE_ID"              "admin"  "Personal Vault -> Environment variables"
-check_var "CF_API_TOKEN"            "admin"  "Personal Vault -> Environment variables (Cloudflare API Token)"
-check_var "RAILWAY_API_TOKEN"       "admin"  "Personal Vault -> Environment variables (Railway API Token)"
+check_var "SCL_MCP_BASE_SECRET"         "admin"  "Personal Vault -> Environment variables (openssl rand -hex 32)"
+check_var "SCL_CLAUDE_CODE_OAUTH_TOKEN" "admin"  "Personal Vault -> Environment variables (claude setup-token)"
+check_var "SCL_CF_ACCOUNT_ID"           "admin"  "Personal Vault -> Environment variables"
+check_var "SCL_CF_ZONE_ID"              "admin"  "Personal Vault -> Environment variables"
+check_var "SCL_CF_API_TOKEN"            "admin"  "Personal Vault -> Environment variables (Cloudflare API Token)"
+check_var "SCL_RAILWAY_API_TOKEN"       "admin"  "Personal Vault -> Environment variables (Railway API Token)"
 
 if [ ${#missing_shared[@]} -eq 0 ]; then
   echo "[OK] Shared Operator Environment Variables: READY"
@@ -161,8 +166,8 @@ if [ "${MODE}" = "operate" ]; then
     echo "ERROR: Shared Cloud Environment variables are missing." >&2
     exit 1
   fi
-  if [ -z "${MCP_BEARER_TOKEN:-}" ] && [ -z "${MCP_BASE_SECRET:-}" ]; then
-    echo "ERROR: Operator requires MCP_BEARER_TOKEN or MCP_BASE_SECRET." >&2
+  if [ -z "${SCL_MCP_BEARER_TOKEN:-}" ] && [ -z "${SCL_MCP_BASE_SECRET:-}" ]; then
+    echo "ERROR: Operator requires SCL_MCP_BEARER_TOKEN or SCL_MCP_BASE_SECRET." >&2
     exit 1
   fi
   echo "Operator pre-flight passed."

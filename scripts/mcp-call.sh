@@ -12,12 +12,12 @@ if [ -f "/tmp/cce-session-${PROJECT_SLUG}.env" ]; then
   # shellcheck disable=SC1090
   source "/tmp/cce-session-${PROJECT_SLUG}.env"
 else
-  CLEAN_DOMAIN=$(printf '%s' "${CF_DOMAIN:?CF_DOMAIN required}" | tr -d '\r\n ' | sed -E 's/^\*\.//')
+  CLEAN_DOMAIN=$(printf '%s' "${SCL_CF_DOMAIN:?SCL_CF_DOMAIN required}" | tr -d '\r\n ' | sed -E 's/^\*\.//')
   export WORKER_URL="https://${PROJECT_SLUG}.${CLEAN_DOMAIN}"
-  if [ -n "${MCP_BASE_SECRET:-}" ]; then
+  if [ -n "${SCL_MCP_BASE_SECRET:-}" ]; then
     export WORKER_TOKEN="$("${SCRIPT_DIR}/derive-token.sh" "${PROJECT_SLUG}")"
   else
-    export WORKER_TOKEN="${MCP_BEARER_TOKEN:?MCP_BEARER_TOKEN or MCP_BASE_SECRET required}"
+    export WORKER_TOKEN="${SCL_MCP_BEARER_TOKEN:?SCL_MCP_BEARER_TOKEN or SCL_MCP_BASE_SECRET required}"
   fi
 fi
 
@@ -26,8 +26,8 @@ const [workerUrl, service, method, paramsRaw] = process.argv.slice(2);
 const params = JSON.parse(paramsRaw || "{}");
 
 const headers = {
-  "CF-Access-Client-Id": process.env.CF_ACCESS_CLIENT_ID || "",
-  "CF-Access-Client-Secret": process.env.CF_ACCESS_CLIENT_SECRET || "",
+  "CF-Access-Client-Id": process.env.SCL_CF_ACCESS_CLIENT_ID || "",
+  "CF-Access-Client-Secret": process.env.SCL_CF_ACCESS_CLIENT_SECRET || "",
   "Authorization": `Bearer ${process.env.WORKER_TOKEN}`
 };
 
