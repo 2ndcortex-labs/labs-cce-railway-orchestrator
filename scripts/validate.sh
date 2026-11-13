@@ -39,7 +39,7 @@ node --input-type=module << 'NODE_EOF'
 import http from 'node:http';
 import assert from 'node:assert/strict';
 
-process.env.SCL_MCP_BEARER_TOKEN = 'test-secret-token-12345';
+process.env.MCP_BEARER_TOKEN = 'test-secret-token-12345';
 process.env.TMUX_MCP_PORT = '18001';
 process.env.TTYD_PORT = '17681';
 
